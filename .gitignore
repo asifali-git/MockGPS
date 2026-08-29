@@ -1,0 +1,79 @@
+# Gradle
+.gradle/
+build/
+/*/build/
+/*/build/
+!/gradle/wrapper/gradle-wrapper.jar
+
+# Local configuration
+local.properties
+*.keystore
+keystore/
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Android
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+*.o
+*.so
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Generated files
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Kotlin
+*.kt.bin
+
+# Logs
+*.log
+
+# Test reports
+*/build/reports/
+*/build/test-results/
+
+# Coverage
+*.ec
+coverage/
+
+# Lint
+lint-results.html
+lint-results.xml
+
+# Firebase
+google-services.json
+
+# Secrets
+*.properties
+secrets.gradle
+
+# OSM cache
+osmdroid/
+
+# Backup
+*.bak
+*.tmp
+*.temp
