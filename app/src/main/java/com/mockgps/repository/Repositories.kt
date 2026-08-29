@@ -7,6 +7,8 @@ import com.mockgps.data.RouteWaypoint
 import com.mockgps.data.SavedRoute
 import com.mockgps.data.SearchHistory
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 class FavoritesRepository(private val db: AppDatabase) {
@@ -43,12 +45,14 @@ class MockProfileRepository(private val db: AppDatabase) {
     suspend fun updateProfile(profile: MockProfile) = db.mockProfileDao().update(profile)
 
     suspend fun deleteProfile(id: Long) {
-        val profile = db.mockProfileDao().getAllProfiles().first().find { it.id == id }
+        val profiles = getAllProfiles().first()
+        val profile = profiles.find { it.id == id }
         profile?.let { db.mockProfileDao().delete(it) }
     }
 
     suspend fun toggleProfileEnabled(profileId: Long, enabled: Boolean) {
-        db.mockProfileDao().getAllProfiles().first().find { it.id == profileId }?.let { profile ->
+        val profiles = getAllProfiles().first()
+        profiles.find { it.id == profileId }?.let { profile ->
             db.mockProfileDao().update(profile.copy(isEnabled = enabled))
         }
     }
@@ -57,12 +61,16 @@ class MockProfileRepository(private val db: AppDatabase) {
 class RouteRepository(private val db: AppDatabase) {
     fun getAllRoutes(): Flow<List<SavedRoute>> = db.savedRouteDao().getAllRoutes()
 
-    fun getRouteWithWaypoints(routeId: Long): Flow<Pair<SavedRoute, List<RouteWaypoint>>> = 
-        db.savedRouteDao().getById(routeId)?.let { route ->
+    fun getRouteWithWaypoints(routeId: Long): Flow<Pair<SavedRoute, List<RouteWaypoint>>> {
+        val routeFlow = db.savedRouteDao().getById(routeId)
+        return if (routeFlow != null) {
             db.routeWaypointDao().getWaypointsForRoute(routeId).map { waypoints ->
-                route to waypoints
+                Pair(db.savedRouteDao().getById(routeId)!!, waypoints)
             }
-        } ?: emptyFlow()
+        } else {
+            emptyFlow()
+        }
+    }
 
     suspend fun createRoute(route: SavedRoute): Long = db.savedRouteDao().insert(route)
 

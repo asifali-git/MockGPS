@@ -28,7 +28,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            val releaseSigning = signingConfigs.findByName("release")
+            if (releaseSigning != null && releaseSigning.storeFile != null) {
+                signingConfig = releaseSigning
+            }
         }
         debug {
             isMinifyEnabled = false
@@ -57,11 +60,13 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            storeFile = rootProject.file("keystore/release.keystore")
-            storePassword = System.getenv("KEYSTORE_PASSWORD")
-            keyAlias = System.getenv("KEY_ALIAS")
-            keyPassword = System.getenv("KEY_PASSWORD")
+        if (rootProject.file("keystore/release.keystore").exists()) {
+            create("release") {
+                storeFile = rootProject.file("keystore/release.keystore")
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
         }
     }
 }

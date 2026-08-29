@@ -6,26 +6,18 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Point
+import android.util.Log
 import android.view.MotionEvent
-import androidx.compose.foundation.Canvas as ComposeCanvas
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.MutableState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color as ComposeColor
-import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.px
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.LifecycleOwner
+import androidx.compose.ui.viewinterop.AndroidView
 import org.osmdroid.api.IMapController
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -51,50 +43,42 @@ fun OsmMapView(
     followLocation: Boolean = false
 ) {
     val context = LocalContext.current
-    val mapView = remember { MapViewWrapper(context) }
-    
-    // Initialize map configuration
-    android.util.Log.d("OsmMapView", "Creating map view")
-    
-    androidx.compose.runtime.DisposableEffect(Unit) {
+    val mapViewWrapper = remember { MapViewWrapper(context) }
+
+    DisposableEffect(Unit) {
         Configuration.getInstance().apply {
             userAgentValue = "MockGPS/1.0"
         }
-        mapView.initialize()
-        onDispose { mapView.onDestroy() }
+        mapViewWrapper.initialize()
+        onDispose { mapViewWrapper.onDestroy() }
     }
 
-    // Update camera position
-    androidx.compose.runtime.LaunchedEffect(latitude, longitude, zoom, followLocation) {
-        mapView.setCenter(latitude, longitude, zoom)
-        if (followLocation) {
-            mapView.setFollowLocation(true)
-        }
+    LaunchedEffect(latitude, longitude, zoom) {
+        mapViewWrapper.setCenter(latitude, longitude, zoom)
     }
 
-    // Update markers
-    androidx.compose.runtime.LaunchedEffect(markers) {
-        mapView.updateMarkers(markers)
+    LaunchedEffect(followLocation) {
+        mapViewWrapper.setFollowLocation(followLocation)
     }
 
-    ComposeCanvas(modifier
-        .fillMaxSize()
-        .detectTapGestures(onTap = { offset ->
-            val (lat, lng) = mapView.getCoordinatesFromPixel(offset.x, offset.y)
-            onMapClick(lat, lng)
-        })
-    ) {
-        // This is a placeholder - actual map rendering happens in AndroidView
+    LaunchedEffect(markers) {
+        mapViewWrapper.updateMarkers(markers)
     }
 
     AndroidView(
-        factory = { mapView.mapView },
-        modifier = modifier.fillMaxSize(),
-        update = { it } // MapView handles its own updates
+        factory = { mapViewWrapper.mapView },
+        modifier = modifier
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    val (lat, lng) = mapViewWrapper.getCoordinatesFromPixel(offset.x, offset.y)
+                    onMapClick(lat, lng)
+                }
+            },
+        update = { /* Map handles its own updates */ }
     )
 }
 
-class MapViewWrapper(private val context: Context) {
+class MapViewWrapper(context: Context) {
     val mapView: MapView = MapView(context).apply {
         setTileSource(TileSourceFactory.MAPNIK)
         setMultiTouchControls(true)
@@ -102,34 +86,30 @@ class MapViewWrapper(private val context: Context) {
         setClickable(true)
         setFocusable(true)
     }
-    
+
     private val mapController: IMapController = mapView.controller.apply {
         setZoom(15.0)
     }
-    
+
     private var myLocationOverlay: MyLocationNewOverlay? = null
     private var compassOverlay: CompassOverlay? = null
     private var scaleBarOverlay: ScaleBarOverlay? = null
-    private var followLocation = false
+    private var followLocationEnabled = false
 
     fun initialize() {
-        // My location overlay
-        myLocationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(context), mapView).apply {
+        myLocationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(mapView.context), mapView).apply {
             enableMyLocation()
             enableFollowLocation()
         }
         mapView.overlays.add(myLocationOverlay!!)
 
-        // Compass overlay
-        compassOverlay = CompassOverlay(context, InternalCompassOrientationProvider(context), mapView).apply {
+        compassOverlay = CompassOverlay(mapView.context, InternalCompassOrientationProvider(mapView.context), mapView).apply {
             enableCompass()
         }
         mapView.overlays.add(compassOverlay!!)
 
-        // Scale bar
-        scaleBarOverlay = ScaleBarOverlay(context).apply {
+        scaleBarOverlay = ScaleBarOverlay(mapView.context).apply {
             setCentred(true)
-            setScaleBarOffset(context.resources.getDimensionPixelSize(org.osmdroid.library.R.dimen.osm_scale_bar_offset))
         }
         mapView.overlays.add(scaleBarOverlay!!)
     }
@@ -140,7 +120,7 @@ class MapViewWrapper(private val context: Context) {
     }
 
     fun setFollowLocation(enabled: Boolean) {
-        followLocation = enabled
+        followLocationEnabled = enabled
         myLocationOverlay?.let {
             if (enabled) it.enableFollowLocation() else it.disableFollowLocation()
         }
@@ -153,8 +133,8 @@ class MapViewWrapper(private val context: Context) {
                 position = GeoPoint(markerData.latitude, markerData.longitude)
                 title = markerData.title
                 snippet = markerData.snippet
-                icon = createMarkerBitmap(markerData.color)
-                anchor = Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM
+                setIcon(createMarkerBitmap(markerData.color))
+                anchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             }
             marker.setOnMarkerClickListener { _, _ ->
                 markerData.onClick?.invoke()
@@ -166,12 +146,12 @@ class MapViewWrapper(private val context: Context) {
     }
 
     private fun createMarkerBitmap(color: Int): Bitmap {
-        val size = (48 * context.resources.displayMetrics.density).toInt()
+        val size = (48 * mapView.context.resources.displayMetrics.density).toInt()
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint().apply {
             isAntiAlias = true
-            color = color
+            this.color = color
         }
         val radius = size / 2f
         canvas.drawCircle(radius, radius, radius * 0.8f, paint)
@@ -182,7 +162,7 @@ class MapViewWrapper(private val context: Context) {
 
     fun getCoordinatesFromPixel(x: Float, y: Float): Pair<Double, Double> {
         val point = Point(x.toInt(), y.toInt())
-        val geoPoint = mapView.projection.fromPixels(point.x, point.y)
+        val geoPoint = mapView.projection.fromPixels(point.x, point.y) as GeoPoint
         return geoPoint.latitude to geoPoint.longitude
     }
 
@@ -199,6 +179,6 @@ data class MapMarker(
     val longitude: Double,
     val title: String = "",
     val snippet: String = "",
-    val color: Int = 0xFFFF0000,
+    val color: Int = -65536,
     val onClick: (() -> Unit)? = null
 )

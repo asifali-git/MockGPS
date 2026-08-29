@@ -1,74 +1,81 @@
 package com.mockgps.ui.screens
 
-import android.Manifest
-import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
-import android.content.pm.PackageManager
-import android.location.Location
-import android.location.LocationManager
-import androidx.activity.compose.rememberPermissionState
-import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ModalBottomSheetState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.mockgps.R
 import com.mockgps.data.FavoriteLocation
-import com.mockgps.data.MockProfile
-import com.mockgps.data.SearchHistory
+import com.mockgps.network.NominatimApi
 import com.mockgps.network.NominatimResult
 import com.mockgps.repository.FavoritesRepository
 import com.mockgps.repository.MockProfileRepository
 import com.mockgps.repository.RouteRepository
 import com.mockgps.repository.SearchHistoryRepository
 import com.mockgps.service.MockLocationService
+import com.mockgps.ui.components.AddEditFavoriteDialog
+import com.mockgps.ui.components.AppUtils
 import com.mockgps.ui.components.CoordinateDisplay
+import com.mockgps.ui.components.CoordinateInputDialog
+import com.mockgps.ui.components.FavoritesList
+import com.mockgps.ui.components.MapMarker
 import com.mockgps.ui.components.MockControls
 import com.mockgps.ui.components.OsmMapView
 import com.mockgps.ui.components.PerAppSpoofingList
 import com.mockgps.ui.components.SearchBar
-import com.mockgps.ui.components.SearchResultsList
 import com.mockgps.ui.components.SearchHistoryList
-import com.mockgps.ui.components.FavoritesList
-import com.mockgps.ui.components.AddEditFavoriteDialog
-import com.mockgps.ui.components.CoordinateInputDialog
-import com.mockgps.ui.components.AdvancedSettingsDialog
+import com.mockgps.ui.components.SearchResultsList
+import com.mockgps.data.SearchHistory
 import com.mockgps.util.LocationUtils
-import com.mockgps.util.PermissionUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.util.concurrent.ConcurrentHashMap
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,368 +83,190 @@ fun MainScreen(
     favoritesRepository: FavoritesRepository,
     historyRepository: SearchHistoryRepository,
     profileRepository: MockProfileRepository,
-    routeRepository: RouteRepository,
-    mockLocationService: MockLocationService
+    routeRepository: RouteRepository
 ) {
-    val navController = rememberNavController()
-    var showSettings by mutableStateOf(false)
-    
-    NavHost(navController, "main") {
-        composable("main") {
-            MainScreenContent(
-                favoritesRepository = favoritesRepository,
-                historyRepository = historyRepository,
-                profileRepository = profileRepository,
-                routeRepository = routeRepository,
-                mockLocationService = mockLocationService,
-                onSettingsClick = { showSettings = true }
-            )
-        }
-        composable("settings") {
-            SettingsScreen(onBackPress = { showSettings = false })
-        }
-    }
-}
+    var showSettings by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun MainScreenContent(
-    favoritesRepository: FavoritesRepository,
-    historyRepository: SearchHistoryRepository,
-    profileRepository: MockProfileRepository,
-    routeRepository: RouteRepository,
-    mockLocationService: MockLocationService,
-    onSettingsClick: () -> Unit
-) {
-    // State
-    var latitude by mutableStateOf(0.0)
-    var longitude by mutableStateOf(0.0)
-    var altitude by mutableStateOf<Double?>(null)
-    var speed by mutableStateOf(0f)
-    var heading by mutableStateOf(0f)
-    var accuracy by mutableStateOf(0f)
-    var zoom by mutableStateOf(15.0)
-    var isMocking by mutableStateOf(false)
-    var searchResults by mutableStateOf<List<NominatimResult>>(emptyList())
-    var showSearchResults by mutableStateOf(false)
-    var showCoordinateDialog by mutableStateOf(false)
-    var showAdvancedSettings by mutableStateOf(false)
-    var showAddFavoriteDialog by mutableStateOf(false)
-    var editingFavorite: FavoriteLocation? by mutableStateOf(null)
-    var selectedTab by mutableStateOf(0)
-    var speedMultiplier by mutableStateOf(1f)
-    var updateInterval by mutableStateOf(1000L)
-    var gpsAccuracy by mutableStateOf(10f)
-    var altitudeMode by mutableStateOf(0)
-    var manualAltitude by mutableStateOf(0.0)
-    var useFixedAltitude by mutableStateOf(false)
-    var enableRouteMode by mutableStateOf(false)
-    var currentAddress by mutableStateOf<String>("")
-    var showFavoritesSheet by mutableStateOf(false)
-    var showHistorySheet by mutableStateOf(false)
-    var showPerAppSheet by mutableStateOf(false)
-    var installedApps by mutableStateOf<List<com.mockgps.ui.components.AppInfo>>(emptyList())
-    
-    val bottomSheetState = rememberModalBottomSheetState(initialValue = false)
-    val scrollState = rememberScrollState()
-    
-    // Permissions
-    val locationPermissionState = rememberPermissionState(Manifest.permission.ACCESS_FINE_LOCATION)
-    val backgroundPermissionState = rememberPermissionState(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-    
-    // Load installed apps
+    if (showSettings) {
+        SettingsScreen(onBackPress = { showSettings = false })
+        return
+    }
+
+    val scope = rememberCoroutineScope()
+    val favorites by favoritesRepository.getAllFavorites().collectAsState(initial = emptyList())
+    val history by historyRepository.getRecentHistory().collectAsState(initial = emptyList())
+    val profiles by profileRepository.getAllProfiles().collectAsState(initial = emptyList())
+
+    var latitude by remember { mutableStateOf(0.0) }
+    var longitude by remember { mutableStateOf(0.0) }
+    var isMocking by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var searchResults by remember { mutableStateOf<List<NominatimResult>>(emptyList()) }
+    var selectedTab by remember { mutableStateOf(0) }
+    var showCoordinateDialog by remember { mutableStateOf(false) }
+    var showAddFavoriteDialog by remember { mutableStateOf(false) }
+    var editingFavorite by remember { mutableStateOf<FavoriteLocation?>(null) }
+    var speedMultiplier by remember { mutableStateOf(1f) }
+    var updateInterval by remember { mutableStateOf(1000L) }
+    var gpsAccuracy by remember { mutableStateOf(10f) }
+    var altitudeMode by remember { mutableStateOf(0) }
+    var manualAltitude by remember { mutableStateOf(0.0) }
+    var useFixedAltitude by remember { mutableStateOf(false) }
+    var enableRouteMode by remember { mutableStateOf(false) }
+    var installedApps by remember { mutableStateOf(emptyList<com.mockgps.ui.components.AppInfo>()) }
+
+    val bottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showSheet by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
-        installedApps = com.mockgps.ui.components.AppUtils.getInstalledApps(LocalContext.current.packageManager)
+        installedApps = AppUtils.getInstalledApps(context.packageManager)
     }
 
-    // Request permissions
-    LaunchedEffect(locationPermissionState, backgroundPermissionState) {
-        if (locationPermissionState.status.isGranted && !backgroundPermissionState.status.isGranted) {
-            // Request background permission after foreground granted
-        }
-    }
-
-    // Get current location
-    LaunchedEffect(Unit) {
-        CoroutineScope(Dispatchers.IO).launch {
-            getCurrentLocation()
-        }
-    }
-
-    // Observe mock location service
-    LaunchedEffect(Unit) {
-        // TODO: Observe mock location service state
-    }
+    val nomApi = remember { NominatimApi.getInstance() }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Mock GPS") },
                 actions = {
-                    IconButton(onClick = onSettingsClick) {
+                    IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
             )
         }
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.Top
-            ) {
-                // Map
-                OsmMapView(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(300.dp),
-                    latitude = latitude,
-                    longitude = longitude,
-                    zoom = zoom,
-                    onMapClick = { lat, lng ->
-                        latitude = lat
-                        longitude = lng
-                        reverseGeocode(lat, lng)
-                    },
-                    onCameraChange = { lat, lng, z ->
-                        latitude = lat
-                        longitude = lng
-                        zoom = z
-                    },
-                    markers = buildMapMarkers(),
-                    showCurrentLocation = !isMocking,
-                    followLocation = !isMocking
-                )
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            OsmMapView(
+                modifier = Modifier.fillMaxWidth().height(300.dp),
+                latitude = latitude,
+                longitude = longitude,
+                zoom = 15.0,
+                onMapClick = { lat, lng ->
+                    latitude = lat
+                    longitude = lng
+                },
+                onCameraChange = { lat, lng, _ -> latitude = lat; longitude = lng },
+                markers = if (latitude != 0.0 || longitude != 0.0) listOf(MapMarker(latitude, longitude, "Selected")) else emptyList()
+            )
 
-                // Coordinate display
-                CoordinateDisplay(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    latitude = latitude,
-                    longitude = longitude,
-                    altitude = altitude,
-                    speed = speed,
-                    heading = heading,
-                    accuracy = accuracy,
-                    isMockLocation = isMocking,
-                    onCopyClick = { copyToClipboard("$latitude, $longitude") },
-                    onNavigateClick = { /* Open in maps */ }
-                )
+            CoordinateDisplay(
+                modifier = Modifier.fillMaxWidth(),
+                latitude = latitude,
+                longitude = longitude,
+                isMockLocation = isMocking,
+                onCopyClick = {
+                    val clip = ClipData.newPlainText("coords", "$latitude, $longitude")
+                    context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+                },
+                onNavigateClick = {
+                    val uri = Uri.parse("geo:$latitude,$longitude?q=$latitude,$longitude")
+                    context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                }
+            )
 
-                // Search bar
-                SearchBar(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    query = "",
-                    onQueryChange = { query ->
-                        if (query.length >= 2) {
-                            search(query)
-                        } else {
-                            searchResults = emptyList()
-                            showSearchResults = false
+            SearchBar(
+                modifier = Modifier.fillMaxWidth(),
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                onSearch = { query ->
+                    CoroutineScope(Dispatchers.IO).launch {
+                        nomApi.search(query).onSuccess { results ->
+                            searchResults = results
                         }
-                    },
-                    onSearch = { query ->
-                        search(query)
-                    },
-                    onClear = { searchResults = emptyList(); showSearchResults = false },
-                    onVoiceInput = { /* Voice search */ },
-                    onCoordinateInput = { showCoordinateDialog = true }
-                )
-
-                // Mock controls
-                MockControls(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    isMocking = isMocking,
-                    onStartMock = { startMocking() },
-                    onStopMock = { stopMocking() },
-                    speedMultiplier = speedMultiplier,
-                    onSpeedChange = { speedMultiplier = it },
-                    updateInterval = updateInterval,
-                    onIntervalChange = { updateInterval = it },
-                    gpsAccuracy = gpsAccuracy,
-                    onAccuracyChange = { gpsAccuracy = it },
-                    onAdvancedSettings = { showAdvancedSettings = true }
-                )
-
-                // Bottom tabs
-                ScrollableTabRow(
-                    selectedTabIndex = selectedTab,
-                    modifier = Modifier.fillMaxWidth(),
-                    edgePadding = 16.dp
-                ) { tabs ->
-                    Tab(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        text = "Search",
-                        icon = { androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Search, "") }
-                    )
-                    Tab(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1; showFavoritesSheet = true },
-                        text = "Favorites",
-                        icon = { androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Favorite, "") }
-                    )
-                    Tab(
-                        selected = selectedTab == 2,
-                        onClick = { selectedTab = 2; showHistorySheet = true },
-                        text = "History",
-                        icon = { androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.History, "") }
-                    )
-                    Tab(
-                        selected = selectedTab == 3,
-                        onClick = { selectedTab = 3; showPerAppSheet = true },
-                        text = "Per-App",
-                        icon = { androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Apps, "") }
-                    )
-                }
-
-                // Content based on selected tab
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(16.dp)
-                        .verticalScroll(scrollState)
-                ) {
-                    when (selectedTab) {
-                        0 -> SearchResultsList(
-                            modifier = Modifier.fillMaxWidth(),
-                            results = searchResults,
-                            onResultClick = { result ->
-                                latitude = result.lat.toDouble()
-                                longitude = result.lon.toDouble()
-                                zoom = 18.0
-                                showSearchResults = false
-                                reverseGeocode(latitude, longitude)
-                            },
-                            onFavoriteToggle = { result, add ->
-                                if (add) addToFavorites(result) else removeFromFavorites(result)
-                            },
-                            isFavorite = { isFavorite(it) }
-                        )
-                        1 -> FavoritesList(
-                            modifier = Modifier.fillMaxWidth(),
-                            favorites = favoritesRepository.getAllFavorites().collectAsState().value ?: emptyList(),
-                            onFavoriteClick = { fav ->
-                                latitude = fav.latitude
-                                longitude = fav.longitude
-                                zoom = 18.0
-                                selectedTab = 0
-                            },
-                            onEditClick = { fav ->
-                                editingFavorite = fav
-                                showAddFavoriteDialog = true
-                            },
-                            onDeleteClick = { fav ->
-                                favoritesRepository.deleteFavorite(fav.id)
-                            }
-                        )
-                        2 -> SearchHistoryList(
-                            modifier = Modifier.fillMaxWidth(),
-                            history = historyRepository.getRecentHistory().collectAsState().value ?: emptyList(),
-                            onItemClick = { item ->
-                                latitude = item.latitude
-                                longitude = item.longitude
-                                zoom = 18.0
-                                selectedTab = 0
-                            },
-                            onDeleteClick = { id ->
-                                historyRepository.deleteHistoryItem(id)
-                            },
-                            onClearAll = { historyRepository.clearHistory() }
-                        )
-                        3 -> PerAppSpoofingList(
-                            modifier = Modifier.fillMaxWidth(),
-                            profiles = profileRepository.getAllProfiles().collectAsState().value ?: emptyList(),
-                            installedApps = installedApps,
-                            onProfileClick = { profile ->
-                                latitude = profile.latitude
-                                longitude = profile.longitude
-                                zoom = 18.0
-                                selectedTab = 0
-                            },
-                            onProfileToggle = { profile, enabled ->
-                                profileRepository.toggleProfileEnabled(profile.id, enabled)
-                                if (enabled) {
-                                    mockLocationService.addProfile(profile)
-                                } else {
-                                    mockLocationService.removeProfile(profile.packageName)
-                                }
-                            },
-                            onAddApp = { /* Show app picker */ },
-                            onEditProfile = { profile ->
-                                // Navigate to edit profile screen
-                            },
-                            onDeleteProfile = { profile ->
-                                profileRepository.deleteProfile(profile.id)
-                                mockLocationService.removeProfile(profile.packageName)
-                            }
-                        )
                     }
-                }
-            }
-        }
+                },
+                onClear = { searchResults = emptyList() },
+                onVoiceInput = {},
+                onCoordinateInput = { showCoordinateDialog = true }
+            )
 
-        // Search results overlay
-        if (showSearchResults && searchResults.isNotEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.3f))
-                    .clickable { showSearchResults = false },
-                contentAlignment = Alignment.BottomCenter
-            ) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(300.dp)
-                        .padding(16.dp)
-                ) {
-                    SearchResultsList(
-                        modifier = Modifier.fillMaxSize(),
+            MockControls(
+                modifier = Modifier.fillMaxWidth(),
+                isMocking = isMocking,
+                onStartMock = {
+                    val intent = android.content.Intent(context, MockLocationService::class.java)
+                    intent.action = MockLocationService.ACTION_START_MOCKING
+                    intent.putExtra("latitude", latitude)
+                    intent.putExtra("longitude", longitude)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(intent)
+                    } else {
+                        context.startService(intent)
+                    }
+                    isMocking = true
+                },
+                onStopMock = {
+                    val intent = android.content.Intent(context, MockLocationService::class.java)
+                    intent.action = MockLocationService.ACTION_STOP_MOCKING
+                    context.startService(intent)
+                    isMocking = false
+                },
+                speedMultiplier = speedMultiplier,
+                onSpeedChange = { speedMultiplier = it },
+                updateInterval = updateInterval,
+                onIntervalChange = { updateInterval = it },
+                gpsAccuracy = gpsAccuracy,
+                onAccuracyChange = { gpsAccuracy = it },
+                onAdvancedSettings = {}
+            )
+
+            ScrollableTabRow(selectedTabIndex = selectedTab, modifier = Modifier.fillMaxWidth(), edgePadding = 16.dp) {
+                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Search") }, icon = { Icon(Icons.Default.Search, "") })
+                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1; showSheet = true }, text = { Text("Favorites") }, icon = { Icon(Icons.Default.Favorite, "") })
+                Tab(selected = selectedTab == 2, onClick = { selectedTab = 2; showSheet = true }, text = { Text("History") }, icon = { Icon(Icons.Default.History, "") })
+                Tab(selected = selectedTab == 3, onClick = { selectedTab = 3; showSheet = true }, text = { Text("Per-App") }, icon = { Icon(Icons.Default.Apps, "") })
+            }
+
+            Box(modifier = Modifier.fillMaxWidth().weight(1f).padding(16.dp).verticalScroll(rememberScrollState())) {
+                when (selectedTab) {
+                    0 -> SearchResultsList(
+                        modifier = Modifier.fillMaxWidth(),
                         results = searchResults,
                         onResultClick = { result ->
                             latitude = result.lat.toDouble()
                             longitude = result.lon.toDouble()
-                            zoom = 18.0
-                            showSearchResults = false
-                            reverseGeocode(latitude, longitude)
+                            searchResults = emptyList()
                         },
                         onFavoriteToggle = { result, add ->
-                            if (add) addToFavorites(result) else removeFromFavorites(result)
+                            if (add) {
+                                scope.launch {
+                                    favoritesRepository.addFavorite(
+                                        FavoriteLocation(
+                                            name = result.display_name.split(",").firstOrNull() ?: result.display_name,
+                                            latitude = result.lat.toDouble(),
+                                            longitude = result.lon.toDouble(),
+                                            address = result.address?.getFullAddress()
+                                        )
+                                    )
+                                }
+                            } else {
+                                scope.launch {
+                                    favorites.find { fav ->
+                                        fav.latitude == result.lat.toDouble() && fav.longitude == result.lon.toDouble()
+                                    }?.let { favoritesRepository.deleteFavorite(it.id) }
+                                }
+                            }
                         },
-                        isFavorite = { isFavorite(it) }
+                        isFavorite = { result ->
+                            favorites.any { it.latitude == result.lat.toDouble() && it.longitude == result.lon.toDouble() }
+                        }
                     )
+                    else -> Text("Select an option or tap items in bottom sheet")
                 }
             }
         }
     }
 
-    // Dialogs
     if (showCoordinateDialog) {
         CoordinateInputDialog(
             onDismiss = { showCoordinateDialog = false },
-            onConfirm = { lat, lng ->
-                latitude = lat
-                longitude = lng
-                zoom = 18.0
-                reverseGeocode(lat, lng)
-            }
-        )
-    }
-
-    if (showAdvancedSettings) {
-        AdvancedSettingsDialog(
-            onDismiss = { showAdvancedSettings = false },
-            altitudeMode = altitudeMode,
-            onAltitudeModeChange = { altitudeMode = it },
-            manualAltitude = manualAltitude,
-            onManualAltitudeChange = { manualAltitude = it },
-            useFixedAltitude = useFixedAltitude,
-            onFixedAltitudeChange = { useFixedAltitude = it },
-            enableRouteMode = enableRouteMode,
-            onRouteModeChange = { enableRouteMode = it }
+            onConfirm = { lat, lng -> latitude = lat; longitude = lng },
+            initialLat = latitude,
+            initialLng = longitude
         )
     }
 
@@ -445,18 +274,14 @@ fun MainScreenContent(
         AddEditFavoriteDialog(
             onDismiss = { showAddFavoriteDialog = false; editingFavorite = null },
             onSave = { name, lat, lng, alt, addr, cat ->
-                if (editingFavorite != null) {
-                    favoritesRepository.updateFavorite(editingFavorite!!.copy(
-                        name = name, latitude = lat, longitude = lng,
-                        altitude = alt, address = addr, category = cat
-                    ))
-                } else {
-                    favoritesRepository.addFavorite(FavoriteLocation(
-                        name = name, latitude = lat, longitude = lng,
-                        altitude = alt, address = addr, category = cat
-                    ))
+                scope.launch {
+                    if (editingFavorite != null) {
+                        favoritesRepository.updateFavorite(editingFavorite!!.copy(name = name, latitude = lat, longitude = lng, altitude = alt, address = addr, category = cat))
+                    } else {
+                        favoritesRepository.addFavorite(FavoriteLocation(name = name, latitude = lat, longitude = lng, altitude = alt, address = addr, category = cat))
+                    }
+                    editingFavorite = null
                 }
-                editingFavorite = null
             },
             initialName = editingFavorite?.name ?: "",
             initialLat = editingFavorite?.latitude ?: latitude,
@@ -467,113 +292,37 @@ fun MainScreenContent(
         )
     }
 
-    // Bottom sheets for favorites, history, per-app
-    ModalBottomSheet(
-        sheetState = bottomSheetState,
-        sheetContent = {
-            when {
-                showFavoritesSheet -> FavoritesList(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    favorites = favoritesRepository.getAllFavorites().collectAsState().value ?: emptyList(),
-                    onFavoriteClick = { fav ->
-                        latitude = fav.latitude
-                        longitude = fav.longitude
-                        zoom = 18.0
-                        showFavoritesSheet = false
-                        bottomSheetState.hide()
-                    },
-                    onEditClick = { fav ->
-                        editingFavorite = fav
-                        showAddFavoriteDialog = true
-                        showFavoritesSheet = false
-                    },
-                    onDeleteClick = { fav ->
-                        favoritesRepository.deleteFavorite(fav.id)
-                    }
+    if (showSheet) {
+        ModalBottomSheet(
+            sheetState = bottomSheetState,
+            onDismissRequest = { showSheet = false }
+        ) {
+            when (selectedTab) {
+                1 -> FavoritesList(
+                    modifier = Modifier.padding(16.dp),
+                    favorites = favorites,
+                    onFavoriteClick = { fav -> latitude = fav.latitude; longitude = fav.longitude; showSheet = false },
+                    onEditClick = { fav -> editingFavorite = fav; showAddFavoriteDialog = true; showSheet = false },
+                    onDeleteClick = { fav -> scope.launch { favoritesRepository.deleteFavorite(fav.id) } }
                 )
-                showHistorySheet -> SearchHistoryList(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    history = historyRepository.getRecentHistory().collectAsState().value ?: emptyList(),
-                    onItemClick = { item ->
-                        latitude = item.latitude
-                        longitude = item.longitude
-                        zoom = 18.0
-                        showHistorySheet = false
-                        bottomSheetState.hide()
-                    },
-                    onDeleteClick = { id ->
-                        historyRepository.deleteHistoryItem(id)
-                    },
-                    onClearAll = { historyRepository.clearHistory() }
+                2 -> SearchHistoryList(
+                    modifier = Modifier.padding(16.dp),
+                    history = history,
+                    onItemClick = { item -> latitude = item.latitude; longitude = item.longitude; showSheet = false },
+                    onDeleteClick = { id -> scope.launch { historyRepository.deleteHistoryItem(id) } },
+                    onClearAll = { scope.launch { historyRepository.clearHistory() } }
                 )
-                showPerAppSheet -> PerAppSpoofingList(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    profiles = profileRepository.getAllProfiles().collectAsState().value ?: emptyList(),
+                3 -> PerAppSpoofingList(
+                    modifier = Modifier.padding(16.dp),
+                    profiles = profiles,
                     installedApps = installedApps,
-                    onProfileClick = { profile ->
-                        latitude = profile.latitude
-                        longitude = profile.longitude
-                        zoom = 18.0
-                        showPerAppSheet = false
-                        bottomSheetState.hide()
-                    },
-                    onProfileToggle = { profile, enabled ->
-                        profileRepository.toggleProfileEnabled(profile.id, enabled)
-                        if (enabled) mockLocationService.addProfile(profile)
-                        else mockLocationService.removeProfile(profile.packageName)
-                    },
-                    onAddApp = { /* Show app picker */ },
-                    onEditProfile = { /* Edit profile */ },
-                    onDeleteProfile = { profile ->
-                        profileRepository.deleteProfile(profile.id)
-                        mockLocationService.removeProfile(profile.packageName)
-                    }
+                    onProfileClick = { profile -> latitude = profile.latitude; longitude = profile.longitude; showSheet = false },
+                    onProfileToggle = { profile, enabled -> scope.launch { profileRepository.toggleProfileEnabled(profile.id, enabled) } },
+                    onAddApp = {},
+                    onEditProfile = {},
+                    onDeleteProfile = { profile -> scope.launch { profileRepository.deleteProfile(profile.id) } }
                 )
             }
         }
-    )
+    }
 }
-
-// Helper functions
-private fun getCurrentLocation() {
-    // TODO: Implement location fetching
-}
-
-private fun reverseGeocode(lat: Double, lng: Double) {
-    // TODO: Implement reverse geocoding
-}
-
-private fun search(query: String) {
-    // TODO: Implement search
-}
-
-private fun startMocking() {
-    // TODO: Start mock location service
-}
-
-private fun stopMocking() {
-    // TODO: Stop mock location service
-}
-
-private fun addToFavorites(result: NominatimResult) {
-    // TODO: Add to favorites
-}
-
-private fun removeFromFavorites(result: NominatimResult) {
-    // TODO: Remove from favorites
-}
-
-private fun isFavorite(result: NominatimResult): Boolean {
-    return false // TODO: Check database
-}
-
-private fun buildMapMarkers(): List<com.mockgps.ui.components.MapMarker> {
-    return emptyList() // TODO: Build markers
-}
-
-private fun copyToClipboard(text: String) {
-    // TODO: Copy to clipboard
-}
-
-@Composable
-fun LocalContext.current(): Context = androidx.compose.ui.platform.LocalContext.current

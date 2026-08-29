@@ -24,6 +24,8 @@ import com.mockgps.util.VersionCompat.setMockLocation
 import com.mockgps.util.VersionCompat.createBackgroundScope
 import com.mockgps.util.VersionCompat.safeDelay
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
@@ -201,6 +203,7 @@ class PerAppLocationService : Service() {
         // Configure AppOps for this app to use our mock provider
         if (shizukuReady) {
             ShizukuHelper.setPerAppMockLocation(
+                this@PerAppLocationService,
                 packageName,
                 state.profile.latitude,
                 state.profile.longitude,
@@ -253,8 +256,8 @@ class PerAppLocationService : Service() {
         
         // Configure AppOps for this app
         if (shizukuReady) {
-            ShizukuHelper.setAppLocationMode(profile.packageName, true)
-            ShizukuHelper.setAppMockLocationMode(profile.packageName, true)
+            ShizukuHelper.setAppLocationMode(this, profile.packageName, true)
+            ShizukuHelper.setAppMockLocationMode(this, profile.packageName, true)
         }
         
         updateNotification()
@@ -266,8 +269,8 @@ class PerAppLocationService : Service() {
         
         // Reset AppOps for this app
         if (shizukuReady) {
-            ShizukuHelper.setAppLocationMode(packageName, false)
-            ShizukuHelper.setAppMockLocationMode(packageName, false)
+            ShizukuHelper.setAppLocationMode(this, packageName, false)
+            ShizukuHelper.setAppMockLocationMode(this, packageName, false)
         }
         
         updateNotification()
@@ -283,20 +286,28 @@ class PerAppLocationService : Service() {
 
     fun addProfile(profile: MockProfile) {
         addProfileInternal(profile)
-        // Persist
-        profileRepository?.addOrUpdateProfile(profile)
+        scope.launch {
+            profileRepository?.addOrUpdateProfile(profile)
+        }
     }
 
     fun removeProfile(packageName: String) {
         removeProfileInternal(packageName)
-        profileRepository?.deleteProfile(
-            profileRepository.getEnabledProfiles()?.first()?.find { it.packageName == packageName }?.id ?: 0
-        )
+        scope.launch {
+            profileRepository?.let { repo ->
+                val profiles = repo.getEnabledProfiles().first()
+                profiles.find { it.packageName == packageName }?.let { profile ->
+                    repo.deleteProfile(profile.id)
+                }
+            }
+        }
     }
 
     fun updateProfile(profile: MockProfile) {
         updateProfileInternal(profile)
-        profileRepository?.updateProfile(profile)
+        scope.launch {
+            profileRepository?.updateProfile(profile)
+        }
     }
 
     fun setRouteMode(packageName: String, waypoints: List<com.mockgps.data.RouteWaypoint>) {

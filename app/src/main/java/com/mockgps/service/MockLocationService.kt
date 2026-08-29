@@ -20,6 +20,7 @@ import com.mockgps.util.VersionCompat.setMockLocation
 import com.mockgps.util.VersionCompat.createBackgroundScope
 import com.mockgps.util.VersionCompat.safeDelay
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
