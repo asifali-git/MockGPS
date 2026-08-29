@@ -83,6 +83,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material3:material3-window-size-class")
+    implementation("androidx.compose.material:material-icons-extended")
     
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.7.7")
@@ -117,8 +118,7 @@ dependencies {
     implementation("com.google.accompanist:accompanist-permissions:0.32.0")
     
     // Shizuku (for per-app location control without root)
-    implementation("moe.shizuku:shizuku-api:13.5.3")
-    implementation("moe.shizuku:shizuku-client:13.5.3")
+    // Using reflection-based approach, no direct Shizuku SDK dependency needed
     
     // Testing
     testImplementation("junit:junit:4.13.2")

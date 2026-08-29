@@ -77,3 +77,6 @@ osmdroid/
 *.bak
 *.tmp
 *.temp
+
+# Local notes/docs with potential secrets
+github mockgps api classic/
