@@ -27,6 +27,12 @@ jobs:
       contents: write
       packages: write
 
+    env:
+      ANDROID_SDK_ROOT: /usr/local/android/sdk
+      ANDROID_NDK_ROOT: /usr/local/android/ndk
+      # Use pre-installed SDK on ubuntu-latest
+      JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -38,22 +44,39 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        run: |
+          if [ ! -d "$ANDROID_SDK_ROOT" ]; then
+            echo "Downloading Android SDK..."
+            mkdir -p /usr/local/android
+            cd /usr/local/android
+            wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076988_latest.zip -O sdk.zip
+            unzip -q sdk.zip
+            rm sdk.zip
+          fi
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_CMDLINE_TOOLS=$ANDROID_SDK_ROOT/cmdline-tools/latest" >> $GITHUB_ENV
+          export ANDROID_SDK_ROOT
+          $ANDROID_CMDLINE_TOOLS/bin/sdkmanager --install "platforms;android-34" --install "build-tools;34.0.0" --install "ndk;26.2.12265221" --accept-licenses
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
       - name: Build Debug APK
         if: github.event.inputs.build_type == 'debug' || github.event_name != 'workflow_dispatch'
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        run: ./gradlew assembleDebug --no-daemon
         env:
+          ANDROID_SDK_ROOT: /usr/local/android/sdk
+          ANDROID_NDK_ROOT: /usr/local/android/ndk
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g"
 
       - name: Build Release APK
         if: github.event.inputs.build_type == 'release'
-        run: ./gradlew assembleRelease --stacktrace --no-daemon
+        run: ./gradlew assembleRelease --no-daemon
         env:
+          ANDROID_SDK_ROOT: /usr/local/android/sdk
+          ANDROID_NDK_ROOT: /usr/local/android/ndk
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g"
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
